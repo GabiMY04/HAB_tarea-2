@@ -11,6 +11,56 @@ from mygene import MyGeneInfo
 ######### FUNCIONES ########################
 ############################################
 
+def merge_txt_and_tsv(txt_path, tsv_path, out_path, txt_sep=None, tsv_sep="\t", axis=0, index=False):
+    """
+    Leer un .txt y un .tsv y escribir un único fichero de salida tsv
+    """
+    import pandas as _pd
+
+    def _read_flexible(path, sep):
+        if path is None:
+            return _pd.DataFrame()
+        if sep is not None:
+            return _pd.read_csv(path, sep=sep, dtype=str, engine="python", header=None)
+        # intentar detectar separador muestreando las primeras líneas
+        sample_text = ""
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                for _ in range(20):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    sample_text += line
+        except Exception:
+            sample_text = ""
+
+        for s in ["\t", ",", ";", "|"]:
+            if s in sample_text:
+                return _pd.read_csv(path, sep=s, dtype=str, engine="python", header=None)
+
+        # fallback: leer línea a línea como una sola columna (evita sep="\n")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = [ln.rstrip("\n\r") for ln in fh if ln.strip() != ""]
+        except Exception:
+            lines = []
+        return _pd.DataFrame(lines, dtype=str)
+
+    df_txt = _read_flexible(txt_path, txt_sep)
+    df_tsv = _read_flexible(tsv_path, tsv_sep)
+
+    if df_txt.empty:
+        result = df_tsv
+    elif df_tsv.empty:
+        result = df_txt
+    else:
+        if axis == 0:
+            result = _pd.concat([df_txt, df_tsv], axis=0, ignore_index=True, sort=False)
+        else:
+            result = _pd.concat([df_txt.reset_index(drop=True), df_tsv.reset_index(drop=True)], axis=1)
+
+    result.to_csv(out_path, sep="\t", index=index, header=False)
+    return out_path
 
 
 
@@ -71,8 +121,8 @@ def algoritmo_diamond(G, seed_genes, n_genes=200):
 ############################################
 
 def main():
-    # Lectura de la red de interracciones que se llama network_dimonds.txt que esta en la carpeta data
-    edges = pd.read_csv("data/network_diamond.txt", header=None, names=["Protein1", "Protein2"], sep=",")
+    merge_txt_and_tsv("data/network_dimonds.txt", "data/string_network_filtered_hugo-400.tsv", "results/merged_output.tsv")
+    edges = pd.read_csv("results/merged_output.tsv", header=None, names=["Protein1", "Protein2"], sep="\t")
     # Creamos la red mapeando el archivo leido
     G = nx.from_pandas_edgelist(edges, source="Protein1", target="Protein2")
     print(f"Red cargada con {G.number_of_nodes()} nodos y {G.number_of_edges()} interacciones.")
