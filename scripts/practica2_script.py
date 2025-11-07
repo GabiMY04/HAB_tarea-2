@@ -2,17 +2,12 @@
 ############## LIBRERIAS ###################
 ############################################
 import argparse
-from html import parser
 import sys
 import networkx as nx
 import pandas as pd
 from scipy.stats import hypergeom
 from mygene import MyGeneInfo
-from gprofiler import GProfiler
 import os
-import matplotlib.pyplot as plt
-import math
-from networkx.algorithms import community as nx_comm
 ############################################
 ######### FUNCIONES ########################
 ############################################
