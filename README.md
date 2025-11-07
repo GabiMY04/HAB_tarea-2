@@ -30,6 +30,14 @@ Escribe un script en Python que implemente un ejemplo de propagación en redes u
 - Documenta tu código explicando los métodos, librerías y algoritmos utilizados.
 - Puedes generar un archivo de resultados en la carpeta `results/` si lo consideras útil.
 
+## Instrucciones de manejo
+- Al ejercutar el codigo se pregunta si se desesa automatizarlo o no. Por lo tanto tiene que poner en la consola lo siguiente
+  - "y": se quiere automatizar le proceso por lo que los datos de entrada se tomaran sobre  la carpeta data
+  - "n": no se quiere automarizar el proceso por lo que es necesario poner los ficheros de entrada que se quieren analizar.
+- > Ej: python .\scripts\practica2_script.py --yes --tsv .\data\string_network_filtered_hugo-400.tsv --txt .\data\network_diamond.txt --out-dir .\results --n-genes 150
+- Se guardaran lo resultados de forma textual en la carpeta results.
+> El proceso puede tardar hasta unos 3 min en terminar dependiendo del numero de conexiones encontrada.
+
 ## Rúbrica de evaluación
 
 La tarea se evaluará sobre un máximo de **10 puntos**, distribuidos según los siguientes criterios:
