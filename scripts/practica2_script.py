@@ -1,12 +1,18 @@
 ############################################
 ############## LIBRERIAS ###################
 ############################################
+import argparse
+from html import parser
+import sys
 import networkx as nx
 import pandas as pd
 from scipy.stats import hypergeom
 from mygene import MyGeneInfo
-
-
+from gprofiler import GProfiler
+import os
+import matplotlib.pyplot as plt
+import math
+from networkx.algorithms import community as nx_comm
 ############################################
 ######### FUNCIONES ########################
 ############################################
@@ -15,13 +21,12 @@ def merge_txt_and_tsv(txt_path, tsv_path, out_path, txt_sep=None, tsv_sep="\t", 
     """
     Leer un .txt y un .tsv y escribir un único fichero de salida tsv.
     """
-    import pandas as _pd
 
     def _read_flexible(path, sep):
         if path is None:
-            return _pd.DataFrame()
+            return pd.DataFrame()
         if sep is not None:
-            return _pd.read_csv(path, sep=sep, dtype=str, engine="python", header=None)
+            return pd.read_csv(path, sep=sep, dtype=str, engine="python", header=None)
         sample_text = ""
         try:
             with open(path, "r", encoding="utf-8") as fh:
@@ -35,7 +40,7 @@ def merge_txt_and_tsv(txt_path, tsv_path, out_path, txt_sep=None, tsv_sep="\t", 
 
         for s in ["\t", ",", ";", "|"]:
             if s in sample_text:
-                return _pd.read_csv(path, sep=s, dtype=str, engine="python", header=None)
+                return pd.read_csv(path, sep=s, dtype=str, engine="python", header=None)
 
         # fallback: leer línea a línea como una sola columna (evita sep="\n")
         try:
@@ -43,7 +48,7 @@ def merge_txt_and_tsv(txt_path, tsv_path, out_path, txt_sep=None, tsv_sep="\t", 
                 lines = [ln.rstrip("\n\r") for ln in fh if ln.strip() != ""]
         except Exception:
             lines = []
-        return _pd.DataFrame(lines, dtype=str)
+        return pd.DataFrame(lines, dtype=str)
 
     df_txt = _read_flexible(txt_path, txt_sep)
     df_tsv = _read_flexible(tsv_path, tsv_sep)
@@ -54,9 +59,9 @@ def merge_txt_and_tsv(txt_path, tsv_path, out_path, txt_sep=None, tsv_sep="\t", 
         result = df_txt
     else:
         if axis == 0:
-            result = _pd.concat([df_txt, df_tsv], axis=0, ignore_index=True, sort=False)
+            result = pd.concat([df_txt, df_tsv], axis=0, ignore_index=True, sort=False)
         else:
-            result = _pd.concat([df_txt.reset_index(drop=True), df_tsv.reset_index(drop=True)], axis=1)
+            result = pd.concat([df_txt.reset_index(drop=True), df_tsv.reset_index(drop=True)], axis=1)
 
     result.to_csv(out_path, sep="\t", index=index, header=False)
     return out_path
@@ -84,12 +89,15 @@ def algoritmo_diamond(G, seed_genes, n_genes=200):
     Es el algoritmo diamond que recibe unos ids de genes "seed_genes" y una 
     red G y devuelve un dataframe con los n_genes mas significativos
     """
+    print("Ejecutando algoritmo DIAMOND...")
+
     results = []
     seeds = [s for s in seed_genes if s in G]
     disease_module = set(seed_genes)
     if(not seeds):
         print("Ninguna semilla encontrada: convierte la red a ENTREZ/HUGO o usa semillas presentes en la red.")
     else:
+        print(f"Semillas encontradas: {seeds}")
         N = G.number_of_nodes()
         module = set(seeds)
         deg = dict(G.degree())
@@ -130,79 +138,9 @@ def algoritmo_diamond(G, seed_genes, n_genes=200):
     results = pd.DataFrame(results, columns=["Gene", "p-value"])
     return results
 
-# ...existing code...
-def hugo_to_entrez_tsv(input_tsv, output_tsv, input_col="Gene", output_col="Entrez",
-                       species="human", batch_size=500, drop_unmapped=False):
-    """
-    Mapear columna input_col (HUGO o mezcla HUGO/Entrez) a Entrez y guardar en output_col.
-    - Si un valor de input_col ya es numérico se conserva tal cual.
-    - Si drop_unmapped=True se eliminan filas sin mapeo.
-    - Devuelve el DataFrame resultante.
-    """
-    import pandas as _pd
-    from mygene import MyGeneInfo
-
-    df = _pd.read_csv(input_tsv, sep="\t", dtype=str, engine="python")
-    if input_col not in df.columns:
-        input_col = df.columns[0]
-
-    vals = df[input_col].astype(str).fillna("").str.strip()
-
-    # preparar lista de símbolos a mapear (no numéricos, no vacíos)
-    to_map = [v for v in vals.unique() if v and not v.isdigit()]
-    mg = MyGeneInfo()
-    mapping = {}
-
-    for i in range(0, len(to_map), batch_size):
-        batch = to_map[i:i+batch_size]
-        try:
-            res = mg.querymany(batch, scopes="symbol", fields="entrezgene", species=species, as_dataframe=False)
-        except Exception:
-            for s in batch:
-                mapping[s] = None
-            continue
-        for r in res:
-            q = str(r.get("query"))
-            if r.get("notfound", False):
-                mapping[q] = None
-            else:
-                eg = r.get("entrezgene")
-                mapping[q] = str(eg) if eg is not None else None
-
-    def _map_value(x):
-        x = str(x).strip()
-        if not x:
-            return None
-        if x.isdigit():
-            return x
-        return mapping.get(x, None)
-
-    df[output_col] = vals.map(_map_value)
-
-    if drop_unmapped:
-        df = df[df[output_col].notna()].copy()
-
-    df.to_csv(output_tsv, sep="\t", index=False)
-    total = len(df)
-    mapped = df[output_col].notna().sum()
-    print(f"Guardado {output_tsv} — filas: {total}, mapeadas a Entrez: {mapped}")
-    return df
-
-############################################
-#################### MAIN ##################
-############################################
 
 
-def main():
-    import os
-    os.makedirs("results", exist_ok=True)
-
-    # Leer aristas (forzar strings)
-    df = pd.read_csv("results/merged_output.tsv", header=None, names=["Protein1", "Protein2"],
-                     sep="\t", dtype=str, engine="python")
-
-    # Función mínima para mapear una Series (mezcla HUGO/Entrez) a Entrez usando MyGene
-    def map_series_to_entrez(series, batch_size=500):
+def map_series_to_entrez(series, batch_size=500): #Mapear los simbolos HUGO a ID Entrez
         vals = series.fillna("").astype(str).str.strip()
         is_num = vals.str.match(r'^\d+$', na=False)
         symbols = list(vals[~is_num].unique())
@@ -229,19 +167,83 @@ def main():
             return mapping.get(x, "")
         return vals.map(to_entrez)
 
-    # Mapear ambas columnas en memoria
+def prompt_yes_no(question, default='y'):
+    """Pregunta sí/no por consola. Devuelve True para sí, False para no."""
+    d = (default or 'y').lower()
+    hint = "[Y/n]" if d == 'y' else "[y/N]"
+    try:
+        r = input(f"{question} {hint} ").strip().lower()
+    except Exception:
+        return d == 'y'
+    if r == "":
+        return d == 'y'
+    return r in ('y', 'yes')
+
+def _resolve_path(path, descr):
+        if path and os.path.exists(path):
+            return path
+        print(f"Fichero esperado para {descr} no encontrado: {path}")
+        if prompt_yes_no(f"¿Desea introducir otra ruta para {descr}?", default='y'):
+            new = input(f"Introduce la ruta para {descr} (enter para omitir): ").strip()
+            return new if new else None
+        print(f"Omitiendo {descr}.")
+        return None
+############################################
+#################### MAIN ##################
+############################################
+
+
+ 
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Pipeline DIAMOnD: map, build network, run DIAMOnD")
+    parser.add_argument("--txt", default="data/network_diamond.txt", help="ruta del .txt de entrada")
+    parser.add_argument("--tsv", default="data/string_network_filtered_hugo-400.tsv", help="ruta del .tsv de entrada")
+    # parser.add_argument("--merged", default="results/merged_output.tsv", help="ruta TSV combinado de entrada/salida")
+    parser.add_argument("--out-dir", default="results", help="directorio de salida")
+    parser.add_argument("--seeds", default="ENO1,PGK1,HK2", help="semillas HUGO separadas por comas")
+    parser.add_argument("--n-genes", type=int, default=100, help="número de genes a obtener con DIAMOnD")
+    args = parser.parse_args(argv)
+
+    # Preguntar al usuario si quieres por defecto o no 
+    if prompt_yes_no("Desea usar las rutas/valores por defecto indicados en los argumentos (--txt/--tsv/--merged/--out-dir)?", default='y'):
+        txt_path = args.txt
+        tsv_path = args.tsv
+       # merged_path = args.merged
+        out_dir = args.out_dir
+        seed_arg = args.seeds
+        n_genes = args.n_genes
+    else:
+        txt_path = input(f"Ruta .txt [{args.txt}]: ").strip() or args.txt
+        tsv_path = input(f"Ruta .tsv [{args.tsv}]: ").strip() or args.tsv
+       # merged_path = input(f"Ruta merged output [{args.merged}]: ").strip() or args.merged
+        out_dir = input(f"Directorio de salida [{args.out_dir}]: ").strip() or args.out_dir
+        seed_arg = input(f"Semillas HUGO separadas por comas [{args.seeds}]: ").strip() or args.seeds
+        n_genes_str = input(f"Número de genes DIAMOnD [{args.n_genes}]: ").strip()
+        try:
+            n_genes = int(n_genes_str) if n_genes_str else args.n_genes
+        except ValueError:
+            print("Valor inválido para n-genes, usando valor por defecto.")
+            n_genes = args.n_genes
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Ejecutar pipeline con las rutas/valores seleccionados
+    merge_txt_and_tsv(txt_path, tsv_path, "results/merged_output.tsv")
+
+    df = pd.read_csv("results/merged_output.tsv", header=None, names=["Protein1", "Protein2"], sep="\t", dtype=str, engine="python")
+
     df["Protein1"] = map_series_to_entrez(df["Protein1"])
     df["Protein2"] = map_series_to_entrez(df["Protein2"])
 
-    # Eliminar aristas con algún extremo sin mapeo
     df = df[(df["Protein1"] != "") & (df["Protein2"] != "")].copy()
-    df.to_csv("results/merged_output_entrez.tsv", sep="\t", index=False)
+    df.to_csv(os.path.join(out_dir, "merged_output_entrez.tsv"), sep="\t", index=False)
 
-    # Crear grafo y ejecutar DIAMOnD
     G = nx.from_pandas_edgelist(df, source="Protein1", target="Protein2")
     print(f"Red cargada con {G.number_of_nodes()} nodos y {G.number_of_edges()} interacciones.")
 
-    gene_ids = get_gene_ids_online(["ENO1", "PGK1", "HK2"])
+    seed_list = [s.strip() for s in seed_arg.split(",") if s.strip()]
+    gene_ids = get_gene_ids_online(seed_list)
     print("Mapping:", gene_ids)
 
     nodes = set(G.nodes())
@@ -253,13 +255,15 @@ def main():
             seed_genes.append(sym)
 
     if not seed_genes:
-        print("Ninguna semilla encontrada: convierte la red a ENTREZ/HUGO o usa semillas presentes en la red.")
-    else:
-        print(f"Semillas encontradas: {seed_genes}")
-        module_df = algoritmo_diamond(G, seed_genes, n_genes=100)
-        module_df.to_csv("results/diamond_module_results.csv", index=False)
-        print("Resultados guardados en results/diamond_module_results.csv")
-        print(module_df.head())
+        print("Ninguna semilla encontrada en la red.")
+        return 1
+
+    print(f"Semillas encontradas: {seed_genes}")
+    module_df = algoritmo_diamond(G, seed_genes, n_genes=n_genes)
+    out_module = os.path.join(out_dir, "diamond_module_results.csv")
+    module_df.to_csv(out_module, index=False)
+    print("Resultados guardados en", out_module)
+    print(module_df.head())
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
